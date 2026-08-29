@@ -1083,6 +1083,16 @@ impl ModuleMap {
       return Either::Left(futures::future::ready(Ok(())));
     }
 
+    // Follow-up to the same backport: a module whose evaluation failed gets
+    // re-imported by real pages. Re-throw its cached exception (re-import
+    // semantics) instead of asserting — asserting aborts the process.
+    if status == v8::ModuleStatus::Errored {
+      let exception = module.get_exception();
+      return Either::Left(futures::future::ready(exception_to_err_result(
+        tc_scope, exception, false, false,
+      )));
+    }
+
     assert_eq!(
       status,
       v8::ModuleStatus::Instantiated,
@@ -1254,6 +1264,16 @@ impl ModuleMap {
     // module is already evaluated, return early as there's nothing to do.
     if status == v8::ModuleStatus::Evaluated {
       return Ok(());
+    }
+
+    // Follow-up to the same backport: a module whose evaluation failed gets
+    // re-imported by real pages. Re-throw its cached exception instead of
+    // asserting — asserting aborts the process.
+    if status == v8::ModuleStatus::Errored {
+      return Err(CoreError::Js(JsError::from_v8_exception(
+        tc_scope,
+        module.get_exception(),
+      )));
     }
 
     assert_eq!(
