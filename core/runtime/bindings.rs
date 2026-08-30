@@ -967,6 +967,21 @@ pub extern "C" fn promise_reject_callback(message: v8::PromiseRejectMessage) {
   // SAFETY: `CallbackScope` can be safely constructed from `&PromiseRejectMessage`
   let scope = &mut unsafe { v8::CallbackScope::new(&message) };
 
+  // This callback can fire while the realm's context is being torn down —
+  // e.g. the host dropped the isolate mid-render and V8 is flushing settle
+  // events for unsettled promises. The embedder slot is unset in that case,
+  // and cloning the state Rc from it dereferences a null pointer (observed as
+  // a silent SIGSEGV in the obscura-worker fleet). Bail out instead.
+  let context = scope.get_current_context();
+  if context
+    .get_aligned_pointer_from_embedder_data(
+      crate::runtime::jsrealm::CONTEXT_STATE_SLOT_INDEX,
+    )
+    .is_null()
+  {
+    return;
+  }
+
   let exception_state = JsRealm::exception_state_from_scope(scope);
   exception_state.track_promise_rejection(
     scope,
