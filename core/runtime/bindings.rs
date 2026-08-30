@@ -667,6 +667,21 @@ pub fn host_import_module_dynamically_callback<'s>(
   specifier: v8::Local<'s, v8::String>,
   import_attributes: v8::Local<'s, v8::FixedArray>,
 ) -> Option<v8::Local<'s, v8::Promise>> {
+  // Same teardown race as promise_reject_callback: V8 can invoke this while
+  // the realm is being torn down, after JsRealmInner::drop has nulled the
+  // embedder slots; module_map_from below would dereference a null pointer.
+  // Returning None makes V8 raise a resolution error for the import, which
+  // is moot once the realm is gone.
+  if scope
+    .get_current_context()
+    .get_aligned_pointer_from_embedder_data(
+      crate::runtime::jsrealm::CONTEXT_STATE_SLOT_INDEX,
+    )
+    .is_null()
+  {
+    return None;
+  }
+
   let cped = scope.get_continuation_preserved_embedder_data();
 
   // NOTE(bartlomieju): will crash for non-UTF-8 specifier
@@ -756,6 +771,18 @@ pub extern "C" fn host_initialize_import_meta_object_callback(
 ) {
   // SAFETY: `CallbackScope` can be safely constructed from `Local<Context>`
   let scope = &mut unsafe { v8::CallbackScope::new(context) };
+
+  // Same teardown race: if the realm is already gone there is no import.meta
+  // to populate, and the state lookups below would dereference a null slot.
+  if context
+    .get_aligned_pointer_from_embedder_data(
+      crate::runtime::jsrealm::CONTEXT_STATE_SLOT_INDEX,
+    )
+    .is_null()
+  {
+    return;
+  }
+
   let module_map = JsRealm::module_map_from(scope);
   let state = JsRealm::state_from_scope(scope);
 
