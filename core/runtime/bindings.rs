@@ -670,8 +670,9 @@ pub fn host_import_module_dynamically_callback<'s>(
   // Same teardown race as promise_reject_callback: V8 can invoke this while
   // the realm is being torn down, after JsRealmInner::drop has nulled the
   // embedder slots; module_map_from below would dereference a null pointer.
-  // Returning None makes V8 raise a resolution error for the import, which
-  // is moot once the realm is gone.
+  // V8 requires a pending exception when the callback returns None (it
+  // CHECKs has_exception()), so throw one — it is moot once the realm is
+  // gone.
   if scope
     .get_current_context()
     .get_aligned_pointer_from_embedder_data(
@@ -679,6 +680,10 @@ pub fn host_import_module_dynamically_callback<'s>(
     )
     .is_null()
   {
+    let message =
+      v8::String::new(scope, "module realm is being torn down").unwrap();
+    let exception = v8::Exception::error(scope, message);
+    scope.throw_exception(exception);
     return None;
   }
 
